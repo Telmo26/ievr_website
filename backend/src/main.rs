@@ -2,6 +2,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use axum::Router;
 
+use tower_http::cors::{CorsLayer, Any};
+
 use sqlx::SqlitePool;
 
 mod state;
@@ -47,6 +49,7 @@ async fn main() {
     let app = Router::new()
         .nest("/api", routes::router())
         .with_state(app_state)
+        .layer(CorsLayer::new().allow_origin(Any))
         .fallback_service(ServeDir::new("assets"));
 
     axum::serve(
