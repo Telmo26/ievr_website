@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Row, sqlite::SqliteRow};
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum Element {
     WIND = 1,
     FOREST = 2,
@@ -24,6 +25,7 @@ impl From<i32> for Element {
 
 #[repr(u8)]
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum Position {
     GK = 1,
     DF = 4,
@@ -45,6 +47,7 @@ impl From<i32> for Position {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum Style {
     BREACH = 0,
     COUNTER = 1,

@@ -33,6 +33,8 @@ const LANGUAGES: [&str; 9] = [
 async fn main() {
     // Create SQLite connection pool
     let data_db = SqlitePool::connect("sqlite:databases/characters.sqlite").await.unwrap();
+    
+    sqlx::query("ATTACH DATABASE 'databases/skills.sqlite' AS skills").execute(&data_db).await.unwrap();
 
     let mut translations = HashMap::with_capacity(LANGUAGES.len());
 

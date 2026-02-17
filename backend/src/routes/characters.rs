@@ -1,4 +1,5 @@
-use axum::{Json, Router, extract::{Query, State}, routing::get};
+use axum::{Json, Router, extract::State, routing::get};
+use axum_extra::extract::Query;
 use serde::{Deserialize, Serialize};
 use sqlx::{Execute, QueryBuilder, Sqlite};
 
@@ -6,50 +7,93 @@ use crate::{character::summary::CharacterSummary, state::SharedState};
 
 pub fn router() -> Router<crate::state::SharedState> {
     Router::new()
-        .route("/summary", get(get_character_summaries))
+        .route("/", get(get_character_summaries))
+        .route("/heroes", get(get_hero_summaries))
+        .route("/basara", get(get_basara_summaries))
 }
 
 pub async fn get_character_summaries(
     State(app_state): State<SharedState>,
     Query(params) : Query<SearchParams>
 ) -> Result<Json<Vec<CharacterSummary>>, axum::http::StatusCode> {
+    get_summaries(app_state, params, "characters").await
+}
 
+pub async fn get_hero_summaries(
+    State(app_state): State<SharedState>,
+    Query(params) : Query<SearchParams>
+) -> Result<Json<Vec<CharacterSummary>>, axum::http::StatusCode> {
+    get_summaries(app_state, params, "heroes").await
+}
+
+pub async fn get_basara_summaries(
+    State(app_state): State<SharedState>,
+    Query(params) : Query<SearchParams>
+) -> Result<Json<Vec<CharacterSummary>>, axum::http::StatusCode> {
+    get_summaries(app_state, params, "basaras").await
+}
+
+async fn get_summaries(
+    app_state: SharedState,
+    params: SearchParams,
+    table_name: &str
+) -> Result<Json<Vec<CharacterSummary>>, axum::http::StatusCode> {
     let mut query_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(
-"SELECT *
-FROM characters
-"
+format!("SELECT index_id, name_id, element, main_position, style, series_id, lvl50_kick, lvl50_control, lvl50_technique, lvl50_pressure, lvl50_physical, lvl50_agility, lvl50_intelligence
+FROM {table_name}
+")
     );
 
     let mut where_used = false;
 
-    if let Some(element) = params.element {
-        query_builder.push("WHERE element = ");
+    if !params.element.is_empty() {
+        query_builder.push("WHERE element IN (");
         where_used = true;
 
-        query_builder.push_bind(element as u8);
-        query_builder.push("\n");
+        let mut separated = query_builder.separated(",");
+        for element in params.element {
+            separated.push_bind(element as u8);
+        }
+        separated.push_unseparated(")\n");
     }
 
-    if let Some(position) = params.position {
+    if !params.position.is_empty() {
         if !where_used {
-            query_builder.push("WHERE main_position = ");
+            query_builder.push("WHERE main_position IN (");
             where_used = false;
         } else {
-            query_builder.push("AND main_position = ");
+            query_builder.push("AND main_position IN (");
         }
 
-        query_builder.push_bind(position as u8);
-        query_builder.push("\n");
+        let mut separated = query_builder.separated(",");
+        for position in params.position {
+            separated.push_bind(position as u8);
+        }
+        separated.push_unseparated(")\n");
     }
 
-    if let Some(style) = params.style {
+    if !params.style.is_empty() {
         if !where_used {
-            query_builder.push("WHERE style = ");
+            query_builder.push("WHERE style IN (");
         } else {
-            query_builder.push("AND style = ");
+            query_builder.push("AND style IN (");
         }
 
-        query_builder.push_bind(style as u8);
+        let mut separated = query_builder.separated(",");
+        for style in params.style {
+            separated.push_bind(style as u8);
+        }
+        separated.push_unseparated(")\n");
+    }
+
+    if let Some(sort) = params.sort {
+        query_builder.push("ORDER BY ");
+        query_builder.push(sort.to_sql());
+
+        if params.descending {
+            query_builder.push(" DESC");
+        }
+
         query_builder.push("\n");
     }
     
@@ -85,11 +129,43 @@ pub struct SearchParams {
     name: String,
 
     #[serde(default)]
-    element: Option<crate::character::common::Element>,
+    element: Vec<crate::character::common::Element>,
 
     #[serde(default)]
-    position: Option<crate::character::common::Position>,
+    position: Vec<crate::character::common::Position>,
 
     #[serde(default)]
-    style: Option<crate::character::common::Style>,
+    style: Vec<crate::character::common::Style>,
+
+    #[serde(default)]
+    sort: Option<SortField>,
+
+    #[serde(default)]
+    descending: bool
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SortField {
+    Kick,
+    Control,
+    Technique,
+    Pressure,
+    Physical,
+    Agility,
+    Intelligence
+}
+
+impl SortField {
+    fn to_sql(&self) -> &'static str {
+        match self {
+            Self::Kick => "lvl50_kick",
+            Self::Control => "lvl50_control",
+            Self::Technique => "lvl50_technique",
+            Self::Pressure => "lvl50_pressure",
+            Self::Physical => "lvl50_physical",
+            Self::Agility => "lvl50_agility",
+            Self::Intelligence => "lvl50_intelligence"
+        }
+    }
 }
