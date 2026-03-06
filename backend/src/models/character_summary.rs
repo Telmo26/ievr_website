@@ -1,11 +1,9 @@
 use serde::Serialize;
 use sqlx::{Row, sqlite::SqliteRow};
 
-use crate::Translation;
-
 use super::common::*;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CharacterSummary {
     index: u16,
     name: String,
@@ -17,19 +15,16 @@ pub struct CharacterSummary {
 }
 
 impl CharacterSummary {
-    pub fn parse(sqlite_row: SqliteRow, translation: &Translation) -> Option<CharacterSummary> {
+    pub fn parse(sqlite_row: SqliteRow) -> Option<CharacterSummary> {
+
         Some(CharacterSummary {
             index: sqlite_row.get("index_id"),
-            name: translation.name(sqlite_row.get("name_id"))?.to_string(),
+            name: sqlite_row.get("name"),
             element: Element::from(sqlite_row.get::<i32, &str>("element")),
             main_positon: Position::from(sqlite_row.get::<i32, &str>("main_position")),
             style: Style::from(sqlite_row.get::<i32, &str>("style")),
-            series: translation.series(sqlite_row.get("series_id")),
+            series: sqlite_row.get("series_name"),
             stats: Stats::try_from(sqlite_row).ok()?
         })
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
     }
 }

@@ -1,25 +1,30 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
+use axum::Json;
 use sqlx::SqlitePool;
+use moka::future::Cache;
 
-use crate::translations::Translation;
+use crate::models::character_summary::CharacterSummary;
 
 pub struct AppState {
     data_db: SqlitePool,
-    translations: HashMap<&'static str, Translation>
+    character_cache: Cache<String, Arc<Json<Vec<CharacterSummary>>>>,
 }
 
 impl AppState {
-    pub fn new(data_db: SqlitePool, translations: HashMap<&'static str, Translation>) -> AppState {
-        AppState { data_db, translations }
+    pub fn new(data_db: SqlitePool) -> AppState {
+        AppState { 
+            data_db,
+            character_cache: Cache::new(50)
+        }
     }
 
     pub fn pool(&self) -> &SqlitePool {
         &self.data_db
     }
 
-    pub fn translation(&self, language: &str) -> &Translation {
-        &self.translations[language]
+    pub fn character_cache(&self) -> &Cache<String, Arc<Json<Vec<CharacterSummary>>>> {
+        &self.character_cache
     }
 }
 

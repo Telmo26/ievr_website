@@ -1,15 +1,17 @@
+use std::{hash::{DefaultHasher, Hash, Hasher}, sync::Arc};
+
 use axum::{Json, Router, extract::State, routing::get};
 use axum_extra::extract::Query;
 use serde::{Deserialize, Serialize};
 use sqlx::{Execute, QueryBuilder, Sqlite};
 
-use crate::{character::summary::CharacterSummary, state::SharedState};
+use crate::{models::character_summary::CharacterSummary, state::SharedState};
 
 pub fn router() -> Router<crate::state::SharedState> {
     Router::new()
         .route("/", get(get_character_summaries))
         .route("/heroes", get(get_hero_summaries))
-        .route("/basara", get(get_basara_summaries))
+        .route("/basaras", get(get_basara_summaries))
 }
 
 pub async fn get_character_summaries(
@@ -38,65 +40,29 @@ async fn get_summaries(
     params: SearchParams,
     table_name: &str
 ) -> Result<Json<Vec<CharacterSummary>>, axum::http::StatusCode> {
-    let mut query_builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new(
-format!("SELECT index_id, name_id, element, main_position, style, series_id, lvl50_kick, lvl50_control, lvl50_technique, lvl50_pressure, lvl50_physical, lvl50_agility, lvl50_intelligence
-FROM {table_name}
-")
+
+    let key = format!("{table_name}:{}", calculate_hash(&params));
+
+    if let Some(response) = app_state.character_cache().get(&key).await {
+        return Ok((*response).clone())
+    }
+
+    let start_time = std::time::Instant::now();
+
+    let mut query_builder = QueryBuilder::new(
+        "SELECT i.*, n.name, s.name AS series_name
+        FROM (
+        "
     );
 
-    let mut where_used = false;
+    build_inner_query(&mut query_builder, &params, &table_name);
 
-    if !params.element.is_empty() {
-        query_builder.push("WHERE element IN (");
-        where_used = true;
+    query_builder.push("\n) i\nJOIN ");    
+    query_builder.push(params.language.to_sql());
+    query_builder.push(".character_names n\nON n.id = i.name_id\nJOIN ");
+    query_builder.push(params.language.to_sql());
+    query_builder.push(".series_names s\nON s.id = i.series_id");
 
-        let mut separated = query_builder.separated(",");
-        for element in params.element {
-            separated.push_bind(element as u8);
-        }
-        separated.push_unseparated(")\n");
-    }
-
-    if !params.position.is_empty() {
-        if !where_used {
-            query_builder.push("WHERE main_position IN (");
-            where_used = false;
-        } else {
-            query_builder.push("AND main_position IN (");
-        }
-
-        let mut separated = query_builder.separated(",");
-        for position in params.position {
-            separated.push_bind(position as u8);
-        }
-        separated.push_unseparated(")\n");
-    }
-
-    if !params.style.is_empty() {
-        if !where_used {
-            query_builder.push("WHERE style IN (");
-        } else {
-            query_builder.push("AND style IN (");
-        }
-
-        let mut separated = query_builder.separated(",");
-        for style in params.style {
-            separated.push_bind(style as u8);
-        }
-        separated.push_unseparated(")\n");
-    }
-
-    if let Some(sort) = params.sort {
-        query_builder.push("ORDER BY ");
-        query_builder.push(sort.to_sql());
-
-        if params.descending {
-            query_builder.push(" DESC");
-        }
-
-        query_builder.push("\n");
-    }
-    
     let query = query_builder.build();
 
     #[cfg(debug_assertions)]
@@ -108,13 +74,19 @@ FROM {table_name}
 
     match result {
         Ok(characters) => {
-            let chars = characters.into_iter().filter_map(|row| {
-                CharacterSummary::parse(row, app_state.translation("fr"))
-            })
-            .filter(|summary| { summary.name().contains(&params.name) })
-            .collect();
+            let chars: Vec<CharacterSummary> = characters.into_iter()
+                .filter_map(CharacterSummary::parse)
+                .collect();
 
-            Ok(Json(chars))
+            let duration = start_time.elapsed();
+
+            println!("Request served in {} micro-s", duration.as_micros());
+
+            let json = Json(chars);
+
+            app_state.character_cache().insert(key, Arc::new(json.clone())).await;
+
+            Ok(json)
         },
         Err(e) => {
             eprintln!("{e}");
@@ -123,30 +95,105 @@ FROM {table_name}
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+fn build_inner_query<'a>(query_builder: &mut QueryBuilder<'_, Sqlite>, params: &'a SearchParams, table_name: &'a str) {
+    query_builder.push(
+        format!("SELECT index_id, name_id, element, main_position, style, series_id, lvl50_kick, lvl50_control, lvl50_technique, lvl50_pressure, lvl50_physical, lvl50_agility, lvl50_intelligence
+        FROM {table_name}\n"
+    ));
+
+    let mut where_used = false;
+
+    // Element filtering
+    if !params.element.is_empty() {
+        query_builder.push("WHERE element IN (");
+        where_used = true;
+
+        let mut separated = query_builder.separated(",");
+        for element in &params.element {
+            separated.push_bind(*element as u8);
+        }
+        separated.push_unseparated(")\n");
+    }
+
+    // Position filtering
+    if !params.position.is_empty() {
+        if !where_used {
+            query_builder.push("WHERE main_position IN (");
+            where_used = true;
+        } else {
+            query_builder.push("AND main_position IN (");
+        }
+
+        let mut separated = query_builder.separated(",");
+        for position in &params.position {
+            separated.push_bind(*position as u8);
+        }
+        separated.push_unseparated(")\n");
+    }
+
+    // Style filtering
+    if !params.style.is_empty() {
+        if !where_used {
+            query_builder.push("WHERE style IN (");
+        } else {
+            query_builder.push("AND style IN (");
+        }
+
+        let mut separated = query_builder.separated(",");
+        for style in &params.style {
+            separated.push_bind(*style as u8);
+        }
+        separated.push_unseparated(")\n");
+    }
+
+    // Sorting
+    if let Some(order) = &params.order {
+        query_builder.push("ORDER BY ");
+        query_builder.push(order.to_sql());
+
+        if params.descending {
+            query_builder.push(" DESC");
+        }
+
+        query_builder.push("\n");
+    }
+
+    query_builder.push("LIMIT 200");
+}
+
+fn calculate_hash<T: Hash>(t: &T) -> u64 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
+}
+
+#[derive(Debug, Serialize, Deserialize, Hash)]
 pub struct SearchParams {
     #[serde(default)]
     name: String,
 
     #[serde(default)]
-    element: Vec<crate::character::common::Element>,
+    element: Vec<crate::models::common::Element>,
 
     #[serde(default)]
-    position: Vec<crate::character::common::Position>,
+    position: Vec<crate::models::common::Position>,
 
     #[serde(default)]
-    style: Vec<crate::character::common::Style>,
+    style: Vec<crate::models::common::Style>,
 
     #[serde(default)]
-    sort: Option<SortField>,
+    order: Option<OrderField>,
 
     #[serde(default)]
-    descending: bool
+    descending: bool,
+
+    #[serde(default = "Language::default")]
+    language: Language
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "lowercase")]
-enum SortField {
+enum OrderField {
     Kick,
     Control,
     Technique,
@@ -156,7 +203,7 @@ enum SortField {
     Intelligence
 }
 
-impl SortField {
+impl OrderField {
     fn to_sql(&self) -> &'static str {
         match self {
             Self::Kick => "lvl50_kick",
@@ -166,6 +213,39 @@ impl SortField {
             Self::Physical => "lvl50_physical",
             Self::Agility => "lvl50_agility",
             Self::Intelligence => "lvl50_intelligence"
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Hash)]
+#[serde(rename_all = "lowercase")]
+#[allow(non_camel_case_types)]
+enum Language {
+    DE,
+    EN,
+    ES,
+    FR,
+    IT,
+    JA,
+    PT,
+    ZH_HANS,
+    ZH_HANT
+}
+
+impl Language {
+    fn default() -> Language { Language::EN }
+
+    fn to_sql(&self) -> &'static str {
+        match self {
+            Self::DE => "de",
+            Self::EN => "en",
+            Self::ES => "es",
+            Self::FR => "fr",
+            Self::IT => "it",
+            Self::JA => "ja",
+            Self::PT => "pt",
+            Self::ZH_HANS => "zh_hans",
+            Self::ZH_HANT => "zh_hant"
         }
     }
 }

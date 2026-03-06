@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, sqlite::SqliteRow};
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Element {
     WIND = 1,
@@ -24,7 +24,7 @@ impl From<i32> for Element {
 }
 
 #[repr(u8)]
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Position {
     GK = 1,
@@ -46,7 +46,7 @@ impl From<i32> for Position {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Style {
     BREACH = 0,
